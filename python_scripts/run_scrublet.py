@@ -2,7 +2,6 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scanpy.api as sc
 import scrublet as scr
 import scipy.io
 import sys
