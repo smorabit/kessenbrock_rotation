@@ -181,8 +181,8 @@ print(x = head(x = cluster5.markers, n = 5))
 
 # find markers for every cluster compared to all remaining cells, report
 # only the positive ones
-#pbmc.markers <- FindAllMarkers(object = pbmc, only.pos = TRUE, min.pct = 0.25, 
-#    thresh.use = 0.25)
+pbmc.markers <- FindAllMarkers(object = pbmc, only.pos = TRUE, min.pct = 0.25, 
+    thresh.use = 0.25)
 pbmc.markers %>% group_by(cluster) %>% top_n(2, avg_logFC)
 
 ```
