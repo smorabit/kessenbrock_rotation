@@ -8,18 +8,8 @@ library("Seurat")
 #load mdsc.combined.cca:
 load("~/Documents/kessenbrock_rotation/Doublet_Pipelines_Data/Combined_CCA/mdsc.combined.cca.Seurat.object.Rda")
 
-#subset dataset into wt and pymt:
-mdsc.wt <- SubsetData(object = mdsc.combined.cca, subset.name = "orig.ident", accept.value="wt")
-mdsc.pymt <- SubsetData(object = mdsc.combined.cca, subset.name = "orig.ident", accept.value = "pymt")
-
-#compute doublets with doubletFinder:
-#doubletFinder(mdsc.wt, expected.doublets = 0.06)
-doubletFinder(mdsc.combined.cca, expected.doublets=0.06) #this gives an error so let's process it from the beginning
-
-########################################################################################################
-
 #Separately label PYMT and WT
-mdsc.combined.data <- Read10X("~/Documents/kessenbrock_rotation/MDSCs/filtered_gene_bc_matrices_mex/mm10/")
+mdsc.combined.data <- Read10X("~/Documents/kessenbrock_rotation/Doublet_Pipelines_Data/MDSCs/filtered_gene_bc_matrices_mex/mm10/")
 wt.ind<-grep("-1",colnames(mdsc.combined.data))
 pymt.ind<-grep("-2",colnames(mdsc.combined.data))
 colnames(mdsc.combined.data)[wt.ind]<-paste("wt",colnames(mdsc.combined.data)[wt.ind],sep="_")
@@ -69,12 +59,16 @@ WT <- RunTSNE(WT, dims.use = 1:20, do.fast = T)
 PYMT <- RunTSNE(PYMT, dims.use = 1:20, do.fast = T)
 
 #try doubletFinder:
-WT <- doubletFinder(WT, expected.doublets = 250)
-PYMT <- doubletFinder(PYMT, expected.doublets=500)
+WT <- doubletFinder(WT, expected.doublets = 0.1) # 0 is the exact number of doublets found in scrublet
+PYMT <- doubletFinder(PYMT, expected.doublets=691) #691 is the exact number of doublets found in scrublet
 
-# merge back together:
-merged_mdsc <- MergeSeurat(object1 = WT, object2 = PYMT) 
-mdsc.combined.cca@meta.data$doubletFinder_prediction <- merged_mdsc@meta.data$pANNPredictions
+WT@meta.data <- transform(WT@meta.data, doublet_prediction =ifelse(pANNPredictions=="Singlet", 0, 1))
+PYMT@meta.data <- transform(PYMT@meta.data, doublet_prediction =ifelse(pANNPredictions=="Singlet", 0, 1))
+
+#convert "Singlet / "Doublet" labels to 0 / 1
+merged_mdsc@meta.data <- transform(merged_mdsc@meta.data, doublet_prediction =ifelse(pANNPredictions=="Singlet", 0, 1))
+mdsc.combined.cca@meta.data$doubletFinder_prediction <- merged_mdsc@meta.data$doublet_prediction
+save(mdsc.combined.cca, file="~/Documents/kessenbrock_rotation/Doublet_Pipelines_Data/Combined_CCA/mdsc.combined.cca.Seurat.object.Rda")
 
 # tsne of predicted doublets:
 p1 <- TSNEPlot(mdsc.combined.cca, group.by="doublet_prediction")
