@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+#
+# Author: Samuel Morabito
+# Kai Kessenbrock lab
+# University of California, Irvine
+# Updated 11/28/18
+#
+# refer to this link for installation instructions for Scrublet:
+# https://github.com/AllonKleinLab/scrublet
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,7 +42,7 @@ doublet_scores, predicted_doublets = scrub.scrub_doublets(min_counts=2,
 #write scrublet output to file:
 print("Writing doublet predictions to %s" % args.output + "/" + args.name + "_predicted_doublets.tsv", file=sys.stderr)
 with open(args.output + "/" + args.name + "_predicted_doublets.tsv", 'w') as outfile:
-	outfile.write("\t".join(["#barcode", "doublet_score", "doublet_prediction"])+"\n")
+	outfile.write("\t".join(["barcode", "doublet_score", "doublet_prediction"])+"\n")
 	for barcode, score, prediction in zip(barcodes, doublet_scores, predicted_doublets):
 		if prediction == False:
 			doublet = "0"
