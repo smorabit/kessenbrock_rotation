@@ -1,8 +1,10 @@
 import velocyto as vcy
 import numpy as np
-import pickle
 from sklearn.manifold import TSNE
-
+import matplotlib.pyplot as plt
+import pandas as pd
+import pickle
+import loompy
 
 # load merged loom file:
 ind = vcy.VelocytoLoom("/pub/smorabit/velo/merged.loom")
@@ -89,39 +91,115 @@ ind.extrapolate_cell_at_t(delta_t=1.) # %% extrapolates gene expression profile 
 tsne = TSNE()
 ind.ts = tsne.fit_transform(ind.pcs[:, :50])
 
-# brca = {
-#     "ind1": False,
-#     "ind2": True,
-#     "ind3": True,
-#     "ind4": True,
-#     "ind9": False,
-#     "ind10": False
-# }
-# cell_types = ["Basal", "Luminal_1", "Luminal_2"]
-# brca_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
-# normal_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
-#
-# for key in brca.keys():
-#     print(key)
-#     subset_bool = np.array(["{}.".format(key) in b for b in ind.ca['CellID']])
-#     subset_ids = ind.ca["CellID"][subset_bool]
-#     subset_clusters = ind.ca["ClusterName"][subset_bool]
-#     spliced = ind.S.T[subset_bool].T
-#     unspliced = ind.U.T[subset_bool].T
-#     for cell in cell_types:
-#         print(cell)
-#         cell_bool = np.array([cell == cluster for cluster in subset_clusters])
-#         cell_spliced = spliced.T[cell_bool].T
-#         cell_unspliced = unspliced.T[cell_bool].T
-#         for i, acc in enumerate(ind.ra['Accession']):
-#             if brca[key] == True:
-#                 brca_spliced[cell][acc]["unspliced"] = np.mean(cell_unspliced[i])
-#                 brca_spliced[cell][acc]["spliced"] = np.mean(cell_spliced[i])
-#             else:
-#                 normal_spliced[cell][acc]["unspliced"] = np.mean(cell_unspliced[i])
-#                 normal_spliced[cell][acc]["spliced"] = np.mean(cell_spliced[i])
-#     print()
+brca = {
+    "ind1": False,
+    "ind2": True,
+    "ind3": True,
+    "ind4": True,
+    "ind9": False,
+    "ind10": False
+}
+cell_types = ["Basal", "Luminal_1", "Luminal_2"]
+brca_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
+normal_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
 
+for key in brca.keys():
+    print(key)
+    subset_bool = np.array(["{}.".format(key) in b for b in ind.ca['CellID']])
+    subset_ids = ind.ca["CellID"][subset_bool]
+    subset_clusters = ind.ca["ClusterName"][subset_bool]
+    spliced = ind.S.T[subset_bool].T
+    unspliced = ind.U.T[subset_bool].T
+    for cell in cell_types:
+        print(cell)
+        cell_bool = np.array([cell == cluster for cluster in subset_clusters])
+        cell_spliced = spliced.T[cell_bool].T
+        cell_unspliced = unspliced.T[cell_bool].T
+        for i, acc in enumerate(ind.ra['Accession']):
+            if brca[key] == True:
+                brca_spliced[cell][acc]["unspliced"] = np.mean(cell_unspliced[i])
+                brca_spliced[cell][acc]["spliced"] = np.mean(cell_spliced[i])
+            else:
+                normal_spliced[cell][acc]["unspliced"] = np.mean(cell_unspliced[i])
+                normal_spliced[cell][acc]["spliced"] = np.mean(cell_spliced[i])
+    print()
+
+#get top 10 genes:
+top_brca = {cell: {"spliced":[0,0,0], "unspliced":[0,0,0]} for cell in cell_types}
+top_normal = {cell: {"spliced":[0,0,0], "unspliced":[0,0,0]} for cell in cell_types}
+for cell in cell_types:
+
+    b_spliced = [brca_spliced[cell][acc]["spliced"] for acc in brca_spliced[cell].keys()]
+    b_unspliced = [brca_spliced[cell][acc]["unspliced"] for acc in brca_spliced[cell].keys()]
+    n_spliced = [normal_spliced[cell][acc]["spliced"] for acc in normal_spliced[cell].keys()]
+    n_unspliced = [normal_spliced[cell][acc]["unspliced"] for acc in normal_spliced[cell].keys()]
+
+    b_spliced_genes = [gene for _,gene in sorted(zip(b_spliced, ind.ra["Accession"]))]
+    b_unspliced_genes = [gene for _,gene in sorted(zip(b_unspliced, ind.ra["Accession"]))]
+    n_spliced_genes = [gene for _,gene in sorted(zip(n_spliced, ind.ra["Accession"]))]
+    n_unspliced_genes = [gene for _,gene in sorted(zip(n_unspliced, ind.ra["Accession"]))]
+
+    #match ensembl id to gene name:
+    gene_names = [[], [], [], []]
+    for i, genes in enumerate([b_spliced_genes, b_unspliced_genes, n_spliced_genes, n_unspliced_genes]):
+        for eid in genes[::-1][:25]:
+            gene_name = ensembl.loc[eid]["Gene name"]
+            if isinstance(gene_name , str):
+                gene_names[i].append(gene_name)
+            else:
+                gene_names[i].append(gene_name.iloc[0])
+
+    top_brca[cell]["spliced"][0] = sorted(b_spliced)[::-1][:25]
+    top_brca[cell]["spliced"][1] = b_spliced_genes[::-1][:25]
+    top_brca[cell]["spliced"][2] = gene_names[0]
+    top_brca[cell]["unspliced"][0] = sorted(b_unspliced)[::-1][:25]
+    top_brca[cell]["unspliced"][1] = b_unspliced_genes[::-1][:25]
+    top_brca[cell]["unspliced"][2] = gene_names[1]
+
+    top_normal[cell]["spliced"][0] = sorted(n_spliced)[::-1][:25]
+    top_normal[cell]["spliced"][1] = n_spliced_genes[::-1][:25]
+    top_normal[cell]["spliced"][2] = gene_names[2]
+    top_normal[cell]["unspliced"][0] = sorted(n_unspliced)[::-1][:25]
+    top_normal[cell]["unspliced"][1] = n_unspliced_genes[::-1][:25]
+    top_normal[cell]["unspliced"][2] = gene_names[3]
+
+
+sheader = "\t".join(["gene_name", "ensembl_id", "mean(spliced_transcripts)"]) + "\n"
+uheader = "\t".join(["gene_name", "ensembl_id", "mean(unspliced_transcripts)"]) + "\n"
+
+for cell in cell_types:
+    with open("/pub/smorabit/velo/brca_{}_spliced_genes.tsv".format(cell), 'w') as f:
+        f.write(sheader)
+        for i in range(len(top_brca[cell]["spliced"][0])):
+            s = "\t".join([top_brca[cell]["spliced"][2][i], top_brca[cell]["spliced"][1][i], str(top_brca[cell]["spliced"][0][i])]) + "\n"
+            f.write(s)
+
+    with open("/pub/smorabit/velo/brca_{}_unspliced_genes.tsv".format(cell), 'w') as f:
+        f.write(uheader)
+        for i in range(len(top_brca[cell]["unspliced"][0])):
+            s = "\t".join([top_brca[cell]["unspliced"][2][i], top_brca[cell]["unspliced"][1][i], str(top_brca[cell]["unspliced"][0][i])]) + "\n"
+            f.write(s)
+
+    with open("/pub/smorabit/velo/normal_{}_spliced_genes.tsv".format(cell), 'w') as f:
+        f.write(sheader)
+        for i in range(len(top_normal[cell]["spliced"][0])):
+            s = "\t".join([top_normal[cell]["spliced"][2][i], top_normal[cell]["spliced"][1][i], str(top_normal[cell]["spliced"][0][i])]) + "\n"
+            f.write(s)
+
+    with open("/pub/smorabit/velo/normal_{}_unspliced_genes.tsv".format(cell), 'w') as f:
+        f.write(uheader)
+        for i in range(len(top_normal[cell]["unspliced"][0])):
+            s = "\t".join([top_normal[cell]["unspliced"][2][i], top_normal[cell]["unspliced"][1][i], str(top_normal[cell]["unspliced"][0][i])]) + "\n"
+            f.write(s)
+
+ensembl = pd.read_csv("~/ensembl.tsv", sep='\t', index_col='Gene stable ID')
+
+# write
 pickle.dump(ind, open("/pub/smorabit/velo/merged2.pickle", 'wb'))
-# pickle.dump(brca_spliced, open("/pub/smorabit/velo/brca_spliced.pickle", 'wb'))
-# pickle.dump(normal_spliced, open("/pub/smorabit/velo/normal_spliced.pickle", 'wb'))
+pickle.dump(brca_spliced, open("/pub/smorabit/velo/brca_spliced.pickle", 'wb'))
+pickle.dump(normal_spliced, open("/pub/smorabit/velo/normal_spliced.pickle", 'wb'))
+
+# read
+brca_spliced = pickle.load(open("/pub/smorabit/velo/brca_spliced.pickle", 'rb'))
+normal_spliced = pickle.load(open("/pub/smorabit/velo/brca_spliced.pickle", 'rb'))
+ind = pickle.load(open("/pub/smorabit/velo/merged2.pickle", 'rb'))

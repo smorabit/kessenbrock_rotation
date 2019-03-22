@@ -7,67 +7,87 @@ import matplotlib.colors as colors
 import pandas as pd
 from copy import deepcopy
 import pickle
-from velocity_helper import VelocityHelper
 from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
-from IPython.display import display, Markdown, Latex
 import rpy2.robjects as robj
 from rpy2.robjects.packages import importr
 from sklearn.neighbors import NearestNeighbors
-import igraph
-from numpy_groupies import aggregate, aggregate_np
+import igraph #couldn't load
+from numpy_groupies import aggregate, aggregate_np #couldn't load
+import loompy
+
 
 ################################################################################
-#                                Load data                                     #
+# Step 0: Combine several loom objects                                         #
 ################################################################################
-
-# %% Initialization
-# %%load a pickled object (one that has already been processed)
-ind = pickle.load(open("/home/smudge/Documents/kessenbrock_lab/RNA_velocity/ind4/ind4.hdf5", 'rb'))
-
-# %%load raw data file (needs to be processed)
-ind = vcy.VelocytoLoom("/home/smudge/Documents/kessenbrock_lab/RNA_velocity/rna_velocity_data/ind10/possorted_genome_bam_DZN3A.loom")
-
-ind_name = "ind10"
-print_dir = "/home/smudge/Documents/kessenbrock_lab/RNA_velocity/figures/{}/".format(ind_name)
+files = ["/pub/smorabit/velo/possorted_genome_bam_82GD0.loom", \
+         "/pub/smorabit/velo/possorted_genome_bam_QKKJQ.loom", \
+         "/pub/smorabit/velo/possorted_genome_bam_ZRA06.loom", \
+         "/pub/smorabit/velo/possorted_genome_bam_5AUZJ.loom", \
+         "/pub/smorabit/velo/possorted_genome_bam_GZ7KV.loom", \
+         "/pub/smorabit/velo/possorted_genome_bam_DZN3A.loom"]
+loompy.combine(files, "/pub/smorabit/velo/merged.loom", key="Accession")
 
 ################################################################################
-#                            Process raw data                                  #
+# Step 1: Process raw data                                                     #
 ################################################################################
+
+# load merged loom file:
+ind = vcy.VelocytoLoom("/pub/smorabit/velo/merged.loom")
+ind_name = "merged"
+print_dir = "/pub/smorabit/velo/figures/"
 
 # %%read in metadata file from Seurat
-metadata = pd.read_table("/home/smudge/Documents/kessenbrock_lab/RNA_velocity/Norm.BRCA.Combined.Seurat.Meta.Data.Object.txt")
+metadata = pd.read_table("/pub/smorabit/velo/Norm.BRCA.Combined.Seurat.Meta.Data.Object.txt")
 metadata.set_index("barcode", inplace=True)
-metadata.head()
 
-# %%adjust barcodes to only contain nucleic acid information:
-ind.ca['CellID'] = np.array([b.split(":")[1] for b in ind.ca["CellID"]])
+# rename barcodes to match seurat metadata:
+prefix_conversion = {
+    "possorted_genome_bam_82GD0": "ind1.epithelial.NORMAL_",
+    "possorted_genome_bam_QKKJQ": "ind2.epithelial.BRCA_",
+    "possorted_genome_bam_ZRA06": "ind3.epithelial.BRCA_",
+    "possorted_genome_bam_5AUZJ": "ind4.epithelial.BRCA_",
+    "possorted_genome_bam_GZ7KV": "ind9.epithelial.NORMAL_",
+    "possorted_genome_bam_DZN3A": "ind10.epithelial.NORMAL_"
+}
+initial_barcodes = ind.ca['CellID']
+updated_barcodes = ["{}{}".format(prefix_conversion[b.split(":")[0]], b.split(":")[1]) for b in ind.ca['CellID']]
+ind.ca["CellID"] = np.array(updated_barcodes)
+
+# how many barcodes match between merged loom object and seurat metadata in each individual?
+metadata_match = metadata.loc[updated_barcodes].dropna()
+
+#ind4 is a special snowflake so do something different for that
+ind4 = open("/data/users/smorabit/ind4_celltypes.tsv")
+ind4_celltypes = {"{}{}".format("ind4.epithelial.BRCA_" ,l.split()[0].split("_")[1]) : l.split()[1] for l in ind4.readlines()}
+for key, val in ind4_celltypes.items():
+    if val == "Basal_Myoepithelial":
+        ind4_celltypes[key] = "Basal"
+    elif val == "Luminal_1_1" or val == "Luminal_1_2":
+        ind4_celltypes[key] = "Luminal_1"
+
+ind4_barcodes = [b for b in updated_barcodes if b in ind4_celltypes.keys()]
+
+# there is something wrong with individual 4 but I think I can fix it, for now I will move on since there is a kitty in my lap
+# later go look on my desktop and find the notebook where I did the ind4 analysis and grab that metadata file just for ind4
+
+# remove cells that are not found in the seurat metadata:
+metadata_bool = np.array([True if (b in metadata_match.index or b in ind4_barcodes) else False for b in ind.ca["CellID"]])
+ind.filter_cells(bool_array = metadata_bool)
+
+# set cell type clusters based on the seurat metadata:
+clusternames = np.array([metadata.loc[b]["Cell.Type"] if "ind4" not in b else ind4_celltypes[b] for b in ind.ca["CellID"]])
+ind.ca["ClusterName"] = clusternames
+ind.set_clusters(ind.ca["ClusterName"])
 
 # %% remove cells with extremely low unspliced detection
 ind.filter_cells(bool_array=ind.initial_Ucell_size > np.percentile(ind.initial_Ucell_size, 0.5))
 
-# %%filter cells based on the Seurat metadata dataframe
-# %%also set cluster names based on Seurat metadata dataframe
-cell_id_dict = {barcode.split("_")[1]: metadata[metadata["individual"] == ind_name]["individual.analysis.idents"][barcode] for barcode in list(metadata[metadata["individual"] == ind_name].index)}
-barcode_bool = np.array([True if barcode in cell_id_dict.keys() else False for barcode in ind.ca['CellID']])
-clusternames = np.array([cell_id_dict[barcode] for barcode in ind.ca['CellID'] if barcode in cell_id_dict.keys()])
-ind.filter_cells(bool_array = np.array(barcode_bool))
-ind.ca["ClusterName"] = clusternames
-
-# %%filter out stromal cells if present:
-stromal_filter = np.array([False if "stromal" in cell_type else True for cell_type in ind.ca["ClusterName"]])
-ind.filter_cells(bool_array=stromal_filter)
-
-# %%set clusters to cell type, defined previously. filter out cells from the unknown cluster
-ind.set_clusters(ind.ca["ClusterName"])
-ind.filter_cells(bool_array = np.array([True if cell_id_dict[barcode] != "Unknown" else False for barcode in ind.ca["CellID"]]))
-
 # %%feature selection using Support Vector Regression
 ind.score_detection_levels(min_expr_counts=40, min_cells_express=30)
 ind.filter_genes(by_detection_levels=True)
-ind.score_cv_vs_mean(3000, plot=True, max_expr_avg=35)
-ind.filter_genes(by_cv_vs_mean=True)
-plt.savefig(print_dir + "feature_selection.pdf")
+ind.score_cv_vs_mean(3000, plot=False, max_expr_avg=35)
+ind.filter_genes(by_cv_vs_mean=True) #this line doesn't work in a basic python shell
 
 # %%normalize data by total molecule count
 ind._normalize_S(relative_size=ind.S.sum(0), target_size=ind.S.sum(0).mean())
@@ -75,17 +95,16 @@ ind._normalize_U(relative_size=ind.U.sum(0), target_size=ind.U.sum(0).mean())
 
 # %% run pca and k-nearest-neighbors
 ind.perform_PCA()
-# %%ind.knn_imputation(n_pca_dims=20, k=500, balanced=True, b_sight=1000, b_maxl=1500, n_jobs=16)
-ind.knn_imputation(n_pca_dims=20, k=500, balanced=True, b_sight=3000, b_maxl=1500, n_jobs=16)
 
 # %%plot pca variance explained
-plt.plot(np.cumsum(ind.pca.explained_variance_ratio_)[:100])
+# plt.plot(np.cumsum(ind.pca.explained_variance_ratio_)[:100])
 n_comps = np.where(np.diff(np.diff(np.cumsum(ind.pca.explained_variance_ratio_))>0.002))[0][0]
-plt.axvline(n_comps, c="k")
-plt.xlabel("PC")
-plt.ylabel("cumulative variance explained")
-plt.savefig(print_dir + "pca_variance_explained.pdf")
+# plt.axvline(n_comps, c="k")
+# plt.xlabel("PC")
+# plt.ylabel("cumulative variance explained")
+# plt.savefig(print_dir + "pca_variance_explained.pdf")
 
+ind.knn_imputation(n_pca_dims=n_comps, k=500, balanced=True, b_sight=3000, b_maxl=1500, n_jobs=16)
 
 # %%calculate velocity
 ind.fit_gammas() # %%there are a ton of parameters here that I could change
@@ -239,7 +258,7 @@ plt.axis("equal");
 plt.savefig(print_dir + "pseudotime.pdf")
 
 #pickle processed ind_pseudotime object
-pickle.dump(ind_pseudotime, open("/data1/rna_velocity_data/{}/{}_pseudotime.hdf5".format(ind_name,ind_name), 'wb'))
+pickle.dump(ind_pseudotime, open("/pub/smorabit/velo/{}/{}_pseudotime.hdf5".format(ind_name,ind_name), 'wb'))
 
 
 ################################################################################
@@ -312,3 +331,67 @@ ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 plt.tight_layout()
 plt.savefig(print_dir + "velocity_magnitudes.pdf")
+
+################################################################################
+#                      Spliced vs unspliced                                    #
+################################################################################
+brca = {
+    "ind1": False,
+    "ind2": True,
+    "ind3": True,
+    # "ind4": True,
+    "ind9": False,
+    "ind10": False
+}
+brca_spliced = {acc: np.array([0.,0.]) for acc in ind.ra['Accession']}
+normal_spliced = {acc: np.array([0.,0.]) for acc in ind.ra['Accession']}
+for key in brca.keys():
+    print(key)
+    subset_bool = np.array(["{}.".format(key) in b for b in ind.ca['CellID']])
+    spliced = ind.S.T[subset_bool].T
+    unspliced = ind.U.T[subset_bool].T
+    for i, acc in enumerate(ind.ra['Accession']):
+        if brca[key] == True:
+            brca_spliced[acc][0] = sum(unspliced[i])
+            brca_spliced[acc][1] = sum(spliced[i])
+        else:
+            normal_spliced[acc] = sum(unspliced[i])
+            normal_spliced[acc] = sum(spliced[i])
+
+################################################################################
+brca = {
+    "ind1": False,
+    "ind2": True,
+    "ind3": True,
+    # "ind4": True,
+    "ind9": False,
+    "ind10": False
+}
+cell_types = ["Basal", "Luminal_1", "Luminal_2"]
+brca_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
+normal_spliced = {cell: {acc: {"spliced": 0., "unspliced": 0.} for acc in ind.ra['Accession']} for cell in cell_types}
+
+for key in brca.keys():
+    print(key)
+    subset_bool = np.array(["{}.".format(key) in b for b in ind.ca['CellID']])
+    subset_ids = ind.ca["CellID"][subset_bool]
+    subset_clusters = ind.ca["ClusterName"][subset_bool]
+    spliced = ind.S.T[subset_bool].T
+    unspliced = ind.U.T[subset_bool].T
+    for cell in cell_types:
+        print(cell)
+        cell_bool = np.array([cell == cluster for cluster in subset_clusters])
+        cell_spliced = spliced.T[cell_bool].T
+        cell_unspliced = unspliced.T[cell_bool].T
+        for i, acc in enumerate(ind.ra['Accession']):
+            if brca[key] == True:
+                brca_spliced[cell][acc]["unspliced"] = sum(cell_unspliced[i])
+                brca_spliced[cell][acc]["spliced"] = sum(cell_spliced[i])
+            else:
+                normal_spliced[cell][acc]["unspliced"] = sum(cell_unspliced[i])
+                normal_spliced[cell][acc]["spliced"] = sum(cell_spliced[i])
+    print()
+
+pickle.dump(ind, open("/pub/smorabit/velo/merged2.pickle", 'wb'))
+pickle.dump(brca_spliced, open("/pub/smorabit/velo/brca_spliced.pickle", 'wb'))
+pickle.dump(normal_spliced, open("/pub/smorabit/velo/normal_spliced.pickle", 'wb'))
